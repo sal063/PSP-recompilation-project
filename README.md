@@ -79,7 +79,7 @@ mingw32-make GAME_NAME=mygame GAME_ELF=<path_to_eboot.elf> GAME_BASE=0x08804000 
 The output executable will land at `build/mygame/mygame.exe`.
 
 ### 5. Setup Game Assets & Run
-1. Place your dumped game UMD ISO in the directory containing `mygame.exe` (name it `AceCombatX.iso` or equivalent, or set the `PSP_ISO` environment variable to point to the ISO path).
+1. Place your dumped game UMD ISO in the directory containing `mygame.exe` (name it `game.iso`, or set the `PSP_ISO` environment variable to point to the ISO path).
 2. Run the game from a command prompt:
 ```bash
 build/mygame/mygame.exe --image build/mygame/mygame_image.bin 0x08804000 <entry_point_address> none none --gui

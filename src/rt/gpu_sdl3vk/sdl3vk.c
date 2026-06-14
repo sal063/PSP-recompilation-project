@@ -142,7 +142,7 @@ int sdl3vk_init(const char *title) {
         fprintf(stderr, "sdl3vk: SDL_Init failed: %s\n", SDL_GetError());
         return 0;
     }
-    s_win = SDL_CreateWindow(title ? title : "Ace Combat X",
+    s_win = SDL_CreateWindow(title ? title : "PSP Recomp",
                              PSP_W * 2, PSP_H * 2,
                              SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     if (!s_win) {
@@ -153,7 +153,7 @@ int sdl3vk_init(const char *title) {
     Uint32 next = 0;
     const char * const *sdl_ext = SDL_Vulkan_GetInstanceExtensions(&next);
     VkApplicationInfo ai = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
-    ai.pApplicationName = "acx_recomp";
+    ai.pApplicationName = "psp_recomp";
     ai.apiVersion = VK_API_VERSION_1_1;
     VkInstanceCreateInfo ici = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
     ici.pApplicationInfo = &ai;

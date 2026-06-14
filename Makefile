@@ -4,10 +4,13 @@
 #   mingw32-make GAME_NAME=mygame GAME_ELF=eboot.elf GAME_BASE=0x08804000 GAME_ENTRY=0x08804128
 #
 
-GAME_NAME  ?= ace_combat_x
-GAME_ELF   ?= games/ULUS10176/eboot/EBOOT.elf
+# Override these on the command line for your game (see README).
+# GAME_BASE is the usual PSP user-module base; GAME_ENTRY is game-specific and
+# must be set to your ELF's entry point.
+GAME_NAME  ?= mygame
+GAME_ELF   ?= eboot.elf
 GAME_BASE  ?= 0x08804000
-GAME_ENTRY ?= 0x08804128
+GAME_ENTRY ?= 0x08804000
 
 CC         ?= gcc
 PYTHON     ?= python

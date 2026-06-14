@@ -106,8 +106,8 @@ int main(int argc, char **argv) {
     SetUnhandledExceptionFilter(sr_crash_filter);
 
     /* Image mode: a pre-relocated flat image (e.g. a rebased PRX from tools/prxload.py) is
-     * loaded at <base> and run from <entry>. Used for Ace Combat X, whose PRX must be
-     * rebased + relocated before it has concrete addresses.
+     * loaded at <base> and run from <entry>. Required for relocatable PRXs, which must be
+     * rebased + relocated before they have concrete addresses.
      *   driver --image <image.bin> <base-hex> <entry-hex> <ref-trace> <out-trace>  */
     if (argc >= 7 && strcmp(argv[1], "--image") == 0) {
         long len;
@@ -154,7 +154,7 @@ have_image:;
 
     int use_sched = 0;
     for (int i = 1; i < argc; i++) if (strcmp(argv[i], "--sched") == 0) use_sched = 1;
-    for (int i = 1; i < argc; i++) if (strcmp(argv[i], "--gui") == 0) { gui_init("Ace Combat X: Skies of Deception"); use_sched = 1; }
+    for (int i = 1; i < argc; i++) if (strcmp(argv[i], "--gui") == 0) { gui_init("PSP Recomp"); use_sched = 1; }
 
     if (use_sched) {
         /* Run with the cooperative scheduler so the game's threads interleave (the boot busy-

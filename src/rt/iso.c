@@ -58,7 +58,7 @@ static void detect_wrapper(void) {
 int iso_init(void) {
     if (s_iso) return 0;
     const char *path = getenv("PSP_ISO");
-    if (!path) path = "Ace Combat X - Skies of Deception.iso";
+    if (!path) path = "game.iso";
     s_iso = fopen(path, "rb");
     if (!s_iso) { fprintf(stderr, "iso: cannot open %s\n", path); return -1; }
     detect_wrapper();

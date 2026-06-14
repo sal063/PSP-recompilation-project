@@ -494,7 +494,7 @@ void ge_set_frame(uint32_t frame) {
             }
             if (fbsnap && nsnap < fbsnap) {
                 char sp[96];
-                snprintf(sp, sizeof(sp), "build/acx/snap_f%05u.ppm", frame);
+                snprintf(sp, sizeof(sp), "snap_f%05u.ppm", frame);
                 ge_snapshot_plain(sp);
                 nsnap++;
             }
@@ -577,7 +577,7 @@ static void sample_tex_f(float fu, float fv_coord, int *r, int *g, int *b, int *
 }
 
 /* SR_TEXDUMP=1: write each distinct texture used by a transform-mode draw once per run as
- * build/acx/tex_ADDR_fF_WxH.ppm (and alpha as a grayscale _a.pgm), decoded through the EXACT
+ * tex_ADDR_fF_WxH.ppm (and alpha as a grayscale _a.pgm), decoded through the EXACT
  * sampler path the rasterizer uses (swizzle + CLUT included). Separates "texture decodes
  * wrong" from "UV/lighting wrong" without guessing. */
 static void texdump_maybe(void) {
@@ -591,11 +591,11 @@ static void texdump_maybe(void) {
     int w = (int)ge.tex_w, h = (int)ge.tex_h;
     if (w <= 0 || h <= 0 || w > 512 || h > 512) return;
     char path[160];
-    snprintf(path, sizeof(path), "build/acx/tex_%08x_f%u_%dx%d.ppm", ge.tex_addr, ge.tex_fmt, w, h);
+    snprintf(path, sizeof(path), "tex_%08x_f%u_%dx%d.ppm", ge.tex_addr, ge.tex_fmt, w, h);
     FILE *fp = fopen(path, "wb");
     if (!fp) return;
     char patha[160];
-    snprintf(patha, sizeof(patha), "build/acx/tex_%08x_f%u_%dx%d_a.pgm", ge.tex_addr, ge.tex_fmt, w, h);
+    snprintf(patha, sizeof(patha), "tex_%08x_f%u_%dx%d_a.pgm", ge.tex_addr, ge.tex_fmt, w, h);
     FILE *fa = fopen(patha, "wb");
     fprintf(fp, "P6\n%d %d\n255\n", w, h);
     if (fa) fprintf(fa, "P5\n%d %d\n255\n", w, h);
@@ -2423,7 +2423,7 @@ static void ge_run_list_inner(uint32_t addr) {
             case GE_END:
                 if (pending_signal) { pending_signal=0; break; }
                 if (s_gpu && s_gpu->flush) s_gpu->flush("listend");
-                if (snap && g_tex_nonzero>start_nz) ge_snapshot("build/acx/fb_content.ppm");
+                if (snap && g_tex_nonzero>start_nz) ge_snapshot("fb_content.ppm");
                 g_ge_list_sig=sig; g_ge_prim_count=prims;
                 if (s_gewatch > 0 && s_ge_frame >= (uint32_t)s_gewatch_after)
                     fprintf(stderr, "GELIST f=%u list=0x%08x fbp=0x%08x prims=%lu writes=%lu nonblack=%lu clearpx=%lu\n",

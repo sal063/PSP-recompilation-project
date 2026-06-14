@@ -66,6 +66,7 @@ static inline void sr_w32(uint32_t a, uint32_t v) { if (sr_inrange(a)) *(uint32_
 
 void  sr_mem_init(void);
 void  sr_load_segment(uint32_t vaddr, const void *data, uint32_t len);
+uint32_t sr_loaded_end(void);   /* highest guest address the loader wrote (module end incl. BSS) */
 
 /* Unaligned word access (MIPS LWL/LWR/SWL/SWR), little-endian, matching PPSSPP's
  * interpreter. The load forms take the current rt and the effective address and return the
@@ -147,7 +148,6 @@ uint32_t gui_buttons(void);
 void     gui_analog(uint8_t *lx, uint8_t *ly);   /* live left-stick (0..255, 128=centre) */
 int      gui_pad_present(void);                  /* 1 when a game controller is connected */
 void     gui_present(uint32_t fbaddr, int fmt, uint32_t stride);
-int      gui_present_rgba(const uint32_t *px);   /* viewer: present a 480x272 XRGB buffer */
 
 typedef uint32_t (*HleFn)(CpuState *s);
 void     sr_hle_register(uint32_t nid, const char *name, HleFn fn);

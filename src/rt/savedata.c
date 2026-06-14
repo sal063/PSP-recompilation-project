@@ -325,21 +325,6 @@ static uint32_t do_load(uint32_t param, const char *game, const char *save) {
     load_filedata(dir, "ICON1.PMF", param + SDP_icon1);
     load_filedata(dir, "PIC1.PNG", param + SDP_pic1);
     load_filedata(dir, "SND0.AT3", param + SDP_snd0);
-    /* ACX profile-enumeration diagnostic (ULUS10176): the records-load state machine
-     * (sub_3717C) accepts a USERID slot as a registered pilot only when the mode-15 secure
-     * read returns result 0 AND the 16 bytes at dataBuf+4 match the live record template at
-     * runtime 0x08A80DF8 (dword_27CDF4+4); otherwise the slot is judged empty and skipped, so
-     * nothing lands in the profile-slot array / occupancy bitmask. Dump both so a single
-     * SR_DLGLOG run shows whether that compare would pass. */
-    if (sdlog()) {
-        uint32_t db = MEM_R32(param + SDP_dataBuf);
-        fprintf(stderr, "savedata: SECRD dir=%s dataSize=%u data+4=", dir,
-                MEM_R32(param + SDP_dataSize));
-        for (uint32_t i = 4; i < 20; i++) fprintf(stderr, "%02x", db ? MEM_R8(db + i) : 0);
-        fprintf(stderr, " tmpl@0x08A80DF8=");
-        for (uint32_t i = 0; i < 16; i++) fprintf(stderr, "%02x", MEM_R8(0x08A80DF8u + i));
-        fprintf(stderr, "\n");
-    }
     MEM_W32(param + SDP_bind, 1021);       /* PSP always responds this; unlocks some games */
     return 0;
 }

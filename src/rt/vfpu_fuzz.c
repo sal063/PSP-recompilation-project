@@ -1,8 +1,11 @@
-/* Differential fuzzer: codegen-emitted VFPU C (build/acx/vfpu_fuzz_cases.h, produced by
- * tools/vfpu_fuzz_gen.py from every distinct VFPU compute word in the game ELF) versus the
- * trace-validated single-instruction interpreter sr_vfpu_interp. For each word it runs many
- * trials from identical randomized CPU states (v[], prefixes, VFPU_CC) and compares the full
- * v[] register file and vfpuCtrl bitwise. Any divergence is a codegen bug of the vcmov class.
+/* Differential fuzzer: codegen-emitted VFPU C versus the trace-validated single-instruction
+ * interpreter sr_vfpu_interp. For each VFPU compute word it runs many trials from identical
+ * randomized CPU states (v[], prefixes, VFPU_CC) and compares the full v[] register file and
+ * vfpuCtrl bitwise. Any divergence is a codegen bug of the vcmov class.
+ *
+ * The cases header is generated per game by tools/vfpu_fuzz_gen.py from every distinct VFPU
+ * compute word in that game's ELF. Point this build at it with
+ * -DVFPU_FUZZ_CASES='"path/to/vfpu_fuzz_cases.h"' (default: vfpu_fuzz_cases.h in the include path).
  *
  * Usage: vfpu_fuzz [trials_per_case] [seed]
  */
@@ -15,7 +18,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../../build/acx/vfpu_fuzz_cases.h"
+#ifndef VFPU_FUZZ_CASES
+#define VFPU_FUZZ_CASES "vfpu_fuzz_cases.h"
+#endif
+#include VFPU_FUZZ_CASES
 
 static uint32_t s_rng = 0x12345678u;
 static uint32_t rng(void) {

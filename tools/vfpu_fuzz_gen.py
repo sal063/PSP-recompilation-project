@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Differential-fuzz generator for the VFPU codegen. Scans the ELF's executable ranges for
 # every DISTINCT VFPU compute instruction word, translates each with codegen.vfpu_effect
-# (exactly what acx_recomp.c contains), and emits build/acx/vfpu_fuzz_cases.h:
+# (exactly what the recompiled C contains), and emits the <out.h> cases header:
 #     a table {word, sample_addr} and a switch running the generated C for case i.
 # src/rt/vfpu_fuzz.c runs each case against sr_vfpu_interp on randomized states.
 #

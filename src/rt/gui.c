@@ -204,12 +204,12 @@ void gui_init(const char *title) {
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(0);
-    wc.lpszClassName = "acx_recomp";
+    wc.lpszClassName = "psp_recomp";
     wc.hCursor = LoadCursor(0, IDC_ARROW);
     RegisterClassA(&wc);
     RECT r = {0, 0, PSP_W * 2, PSP_H * 2};
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    s_hwnd = CreateWindowA("acx_recomp", title ? title : "Ace Combat X",
+    s_hwnd = CreateWindowA("psp_recomp", title ? title : "PSP Recomp",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
         r.right - r.left, r.bottom - r.top, 0, 0, GetModuleHandleA(0), 0);
     s_px = (uint32_t *)malloc(PSP_W * PSP_H * 4);
@@ -254,31 +254,6 @@ static void convert_fb(uint32_t fbaddr, int fmt, uint32_t stride) {
             s_px[y * PSP_W + x] = ((uint32_t)rr << 16) | ((uint32_t)gg << 8) | (uint32_t)bb;
         }
     }
-}
-
-/* Present a host-built 480x272 XRGB8888 buffer (0x00RRGGBB) straight to the window, bypassing
- * the guest framebuffer / GE target. Used by the asset viewer to draw its own image. Samples
- * input and paces exactly like gui_present so gui_buttons()/gui_analog() stay live. */
-int gui_present_rgba(const uint32_t *px) {
-    if (!s_on || !px) return 0;
-#ifdef SR_SDL3VK
-    if (s_sdl3) {
-        int shown = sdl3vk_present_rgba(px);
-        if (shown == 0) { sdl3vk_shutdown(); _Exit(0); }
-        s_buttons = sdl3vk_buttons();
-        sdl3vk_analog(&s_lx, &s_ly);
-        s_pad_present = sdl3vk_pad_present();
-        extern int sched_vbl_paced(void);
-        if (!sched_vbl_paced()) {
-            LARGE_INTEGER now; QueryPerformanceCounter(&now);
-            double dt = (double)(now.QuadPart - s_last.QuadPart) / (double)s_freq.QuadPart;
-            if (dt < 1.0/60.0) { DWORD ms = (DWORD)((1.0/60.0 - dt) * 1000.0); if (ms > 0 && ms < 100) Sleep(ms); }
-        }
-        QueryPerformanceCounter(&s_last);
-        return 1;
-    }
-#endif
-    return 0;
 }
 
 void gui_present(uint32_t fbaddr, int fmt, uint32_t stride) {

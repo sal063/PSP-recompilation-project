@@ -26,9 +26,9 @@ pipeline one at a time.
   (`mingw-w64-ucrt-x86_64-vulkan-headers`, `-vulkan-loader`) from MSYS2 ucrt64 —
   installed already. Link: `-lSDL3 -lvulkan-1`. Deploy `SDL3.dll` beside the exe.
 - Shader compiler for Phase 1+: `glslc` from the Vulkan SDK (`C:\VulkanSDK\1.4.350.0\Bin`).
-- Build target: `mingw32-make build/acx/acx_sdl3.exe` (the classic GDI `acx_gui.exe` is
-  unchanged). Run with `run_acx_sdl3.bat`. Inside the SDL3 build, `SR_VIDEO=gdi` falls
-  back to the old window at runtime.
+- Built into the game exe by the top-level `Makefile` (the runtime always links this SDL3 +
+  Vulkan backend; `-DSR_SDL3VK`). Inside that build, `SR_VIDEO=gdi` falls back to the classic
+  Win32/GDI window at runtime.
 
 ## Phases
 
@@ -41,7 +41,7 @@ mapping as gui.c). Deliverable: pixel-identical output to the GDI build at lower
 resizable window, fullscreen-capable.
 
 ### Phase 1 — GE draw capture → Vulkan rasterization (DONE, `ge_gpu.c`)
-Enabled with `SR_GPU_GE=1` (default in `run_acx_sdl3.bat`). Implementation:
+Enabled with `SR_GPU_GE=1`. Implementation:
 - Capture seam: runtime hooks (`GeGpuHooks` in `src/rt/ge_shared.h`, registered via
   `ge_set_gpu_hooks`) at the top of `raster_tri` and `fill_sprite`. ge.c still does
   vertex decode, T&L, near-clipping, primitive acceptance and cull-order reordering;
@@ -94,7 +94,7 @@ Enabled with `SR_GPU_GE=1` (default in `run_acx_sdl3.bat`). Implementation:
 - `ge_gpu.h` / `ge_gpu.c` — Phase 1+2: capture, batching, pipeline/texture caches,
   flush + guest-VRAM writeback. Hooks defined in `src/rt/ge_shared.h`.
 - `shaders/psp.vert`, `shaders/psp.frag` — compiled by glslc (`GLSLC` in the Makefile)
-  into `build/acx/psp_{vert,frag}.inc` at build time.
+  into `psp_{vert,frag}.inc` at build time.
 - `tools/ppmdiff.py`, `tools/ppm2png.py` (repo root) — A/B snapshot comparison.
 
 ## Environment variables

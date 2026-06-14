@@ -26,6 +26,7 @@
 #include <string.h>
 #include <wchar.h>
 #include <setjmp.h>
+#include <direct.h>   /* _mkdir for the writable fs/ scratch dir */
 
 uint32_t sr_last_nid = 0;
 
@@ -67,24 +68,36 @@ static uint32_t stack_arg(CpuState *s, int idx) {
 static uint32_t s_uid = 0x110;
 uint32_t sr_alloc_uid(void) { return s_uid++; }
 
-/* User-partition bump allocator. PPSSPP places the first sceKernelAllocPartitionMemory
- * Low block immediately after the loaded module (ACX's PRX BSS ends ~0x08b9xxxx), not at a
- * round boundary. Starting at the module end reproduces PPSSPP's address layout so the
- * game's internal sub-allocator yields the same buffer addresses as the reference run (the read
- * buffer and the decoded index table stay distinct). Calibrated: at 0x08c00000 the index
- * table landed at 0x08f32200 vs the reference run's 0x08ed3200 (0x5f000 high). */
-static uint32_t s_heap = 0x08ba1000;     /* bump pointer in user RAM, just above ACX's module */
-/* The kernel hands the game one user partition. PPSSPP's loader reports it as UserSbrk
- * 0x08ba1000..0x09e22800 for this module; s_heap starts at that base, so the free size the game
- * queries is (top - bump pointer) and shrinks as it allocates -- not a fixed fake. The game reads
- * this to choose its asset working-set / layout, so a constant 16 MB made it diverge. */
-#define USER_PARTITION_TOP 0x09e22800u
+/* User-partition bump allocator. The kernel hands the game one user partition; the first
+ * sceKernelAllocPartitionMemory Low block sits immediately after the loaded module (like
+ * PPSSPP's loader, which places it at the module end rather than a round boundary). Starting at
+ * the real module end keeps the game's internal sub-allocator producing stable addresses.
+ *
+ * Generic defaults: the heap base is the loaded module's end (BSS included, from the flat
+ * image) rounded up to 4 KB, and the partition runs to a conventional PSP user-memory ceiling.
+ * Both are overridable as hex via SR_HEAP_BASE / SR_PARTITION_TOP for a game that needs an exact
+ * PSP layout to reproduce reference addresses bit-for-bit. The free size the game queries is
+ * (top - bump pointer) and shrinks as it allocates -- not a fixed fake. */
+static uint32_t s_heap = 0;              /* bump pointer in user RAM; 0 = not yet initialised */
+static uint32_t s_part_top = 0;
+
+static void user_partition_init(void) {
+    if (s_heap) return;
+    const char *eb = getenv("SR_HEAP_BASE");
+    const char *et = getenv("SR_PARTITION_TOP");
+    uint32_t base = eb ? (uint32_t)strtoul(eb, NULL, 16)
+                       : ((sr_loaded_end() + 0xFFFu) & ~0xFFFu);   /* 4 KB above module end */
+    if (base < SR_RAM_BASE) base = SR_RAM_BASE;                    /* never below user RAM */
+    s_heap = base;
+    s_part_top = et ? (uint32_t)strtoul(et, NULL, 16) : 0x0A000000u;
+}
 
 typedef struct { uint32_t uid, addr, size; } Block;
 static Block s_blocks[256];
 static int s_nblocks = 0;
 
 static uint32_t alloc_block(uint32_t size) {
+    user_partition_init();
     uint32_t addr = (s_heap + 0xFFu) & ~0xFFu;   /* 256-byte align */
     s_heap = addr + size;
     uint32_t uid = sr_alloc_uid();
@@ -141,7 +154,8 @@ static uint32_t h_AllocPartitionMemory(CpuState *s) {
 static uint32_t h_GetBlockHeadAddr(CpuState *s) { return block_addr(A0); }
 static uint32_t h_FreePartitionMemory(CpuState *s) { (void)s; return 0; }
 static uint32_t partition_free(void) {
-    return s_heap < USER_PARTITION_TOP ? USER_PARTITION_TOP - s_heap : 0u;
+    user_partition_init();
+    return s_heap < s_part_top ? s_part_top - s_heap : 0u;
 }
 /* A small accounting tail (the kernel keeps block headers per allocation) so the figure is not
  * the exact arithmetic free; PPSSPP reports e.g. 0x1a0b00 with several blocks live. */
@@ -241,11 +255,11 @@ static void font_load(void) {
     char path[600];
     const char *dir = getenv("SR_FONTDIR");
     if (dir) { snprintf(path, sizeof path, "%s/ltn0.pgf", dir); s_pgf_ltn = pgf_open(path); }
+    if (!s_pgf_ltn) s_pgf_ltn = pgf_open("font/ltn0.pgf");
     if (!s_pgf_ltn) s_pgf_ltn = pgf_open("third_party/ppsspp/assets/flash0/font/ltn0.pgf");
-    if (!s_pgf_ltn) s_pgf_ltn = pgf_open("build/acx/ltn0.pgf");
     if (dir) { snprintf(path, sizeof path, "%s/jpn0.pgf", dir); s_pgf_jpn = pgf_open(path); }
+    if (!s_pgf_jpn) s_pgf_jpn = pgf_open("font/jpn0.pgf");
     if (!s_pgf_jpn) s_pgf_jpn = pgf_open("third_party/ppsspp/assets/flash0/font/jpn0.pgf");
-    if (!s_pgf_jpn) s_pgf_jpn = pgf_open("build/acx/jpn0.pgf");
     if (getenv("SR_FONTLOG"))
         fprintf(stderr, "font_load: ltn0=%s jpn0=%s\n", s_pgf_ltn ? "ok" : "MISSING", s_pgf_jpn ? "ok" : "MISSING");
 }
@@ -818,25 +832,21 @@ static uint32_t h_KernelPrintf(CpuState *s) {
 typedef struct { int used; uint32_t lba, size, off; int64_t async_res; FILE *host; } Fd;
 static Fd s_fds[64];
 
-/* Map a guest path to a host scratch file under build/acx/fs (writable storage that the read-only
- * ISO cannot provide -- ms0: saves, the game's registry file, etc.). The path is flattened so
- * subdirectories collapse into one filename. */
+/* Map a guest path to a host scratch file under the writable fs/ directory (storage the
+ * read-only ISO cannot provide -- ms0: saves, the game's registry file, etc.). The directory
+ * is "fs" by default, overridable with SR_FSDIR, and created on first use. The path is
+ * flattened so subdirectories collapse into one filename. */
 static void host_path(const char *guest, char *out, int max) {
-    int n = snprintf(out, (size_t)max, "build/acx/fs/");
+    const char *dir = getenv("SR_FSDIR");
+    if (!dir) dir = "fs";
+    static int made = 0;
+    if (!made) { _mkdir(dir); made = 1; }
+    int n = snprintf(out, (size_t)max, "%s/", dir);
     for (int i = 0; guest[i] && n < max - 1; i++) {
         char c = guest[i];
         out[n++] = (char)((c=='/'||c==':'||c=='\\'||c==' ') ? '_' : c);
     }
     out[n] = 0;
-}
-
-/* Optional debug override for the in-game text language. The game reads the global system language
- * via sceUtilityGetSystemParamInt (PSP_SYSTEMPARAM_ID_INT_LANGUAGE), which we serve as English (see
- * h_GetSystemParamInt), so by default nothing is forced here. SR_LANG=<n> pokes the resolved value
- * into the game's config object (unk_27CAF4+328) for testing (0=JP,1=EN,2=FR,3=ES,4=DE,5=IT...). */
-static void sr_force_language(void) {
-    const char *lg = getenv("SR_LANG");
-    if (lg) MEM_W8(0x08A80C3C, (uint8_t)atoi(lg));
 }
 
 static uint32_t h_IoOpen(CpuState *s) {
@@ -845,7 +855,6 @@ static uint32_t h_IoOpen(CpuState *s) {
     char path[256];
     guest_cstr(A0, path, sizeof(path));
     uint32_t flags = A1;
-    sr_force_language();
     if (getenv("SR_IOLOG")) fprintf(stderr, "Open(%s) flags=0x%x\n", path, flags);
     if (getenv("SR_PATHHEX")) {
         int bad = 0; for (int i = 0; path[i]; i++) if ((unsigned char)path[i] < 0x20 || (unsigned char)path[i] >= 0x7f) bad = 1;
@@ -1231,90 +1240,9 @@ static uint32_t h_DisplaySetFrameBuf(CpuState *s) {
         if (gw && s_vcount >= (uint32_t)gwa)
             fprintf(stderr, "PRESENT f=%u buf=0x%08x fmt=%u stride=%u\n", s_vcount, A0, A2, A1);
     }
-    /* Asset viewer (SR_VIEWER): drive the game's own engine to load/render assets. Runs here
-     * because this is once-per-frame on the render thread with a live CpuState. When it presents
-     * its own frame it returns 1, so the game's frame is suppressed. */
-    { extern int viewer_on_present(CpuState *); if (viewer_on_present(s)) return 0; }
     /* Interactive window: show this finished frame and sample the keyboard (A1=bufferwidth,
      * A2=pixelformat 0=5650/1=5551/2=4444/3=8888). */
     if (gui_on() && s_framebuf) gui_present(s_framebuf, (int)A2, A1);
-    if (getenv("SR_SCENETRACE") && (s_vcount % 30) == 0) {
-        /* Director state (f_089e16d0 dispatches the handler at [0x08a6b640+0x40]). In PPSSPP this
-         * handler drives the boot sequence and eventually starts the plaympeg movie thread; if it
-         * stays null/stuck here, the sequence never advances. Dump the director object. */
-        /* Boot state machine (f_0880b398 dispatches table[0x08a3ed58][state]); index 19 = enter
-         * intro movie. If the index never reaches 19, the movie never starts. */
-        /* Boot sequence state (the gate to the intro movie). f_0880b398 dispatches the handler
-         * table at 0x08a3ed58 indexed by the state at 0x08a83c74; index 19 enters the intro movie
-         * (installs the director handler at 0x08a6b680). The boot stalls at state 0 (a menu whose
-         * scripted/demo input object is never set up -- see VERIFICATION.md Phase 8). */
-        fprintf(stderr, "frame %3u: state=%d counter=%d  inTbl[0x08a6b34c]: +000=0x%08x +200=0x%08x +204=0x%08x +208=0x%08x +20c=0x%08x +218=0x%08x\n",
-            s_vcount, (int)MEM_R32(0x08a83c74), (int)MEM_R32(0x08a83c78),
-            MEM_R32(0x08a6b34c), MEM_R32(0x08a6b54c), MEM_R32(0x08a6b550),
-            MEM_R32(0x08a6b554), MEM_R32(0x08a6b558), MEM_R32(0x08a6b564));
-    }
-    /* SR_BGMSTAT: trace the streamed-BGM player and global fader that gate scene switches.
-     * The scene manager (EBOOT sub_F3A0) won't proceed past its fade-to-black until the BGM
-     * stream state (dword_39C184[0], guest 0x08BA0184) returns to 0 (idle); the streamer thread
-     * (entry 0x08A0063C) must see its stop request ([7], +0x1C) and wind down. The full-screen
-     * fade quad alpha comes from the fader object at 0x08A2BC30 {progress,f step,f flags,b}. */
-    {
-        static int bs = -1;
-        if (bs < 0) bs = getenv("SR_BGMSTAT") ? 1 : 0;
-        if (bs && (s_vcount % 60) == 0) {
-            uint32_t b = 0x08BA0184u;            /* BGM stream channel 0 control block */
-            float prog, step;
-            uint32_t pw = MEM_R32(0x08A2BC30), sw = MEM_R32(0x08A2BC34);
-            memcpy(&prog, &pw, 4); memcpy(&step, &sw, 4);
-            fprintf(stderr, "BGMSTAT f=%u state=%d stop=%d pause=%d hs12=%d atrac=%d fd=%d pos=%u "
-                            "fade={prog=%g step=%g flags=0x%02x}\n",
-                    s_vcount, (int)MEM_R32(b), (int)MEM_R32(b+0x1C), (int)MEM_R32(b+0x28),
-                    (int)MEM_R32(b+0x30), (int)MEM_R32(b+0x10), (int)MEM_R32(b+0x14), MEM_R32(b+0x24),
-                    prog, step, MEM_R8(0x08A2BC38));
-            if ((s_vcount % 600) == 0) { extern void sched_dump_threads(void); sched_dump_threads(); }
-        }
-    }
-    /* SR_REGSTAT: dump the engine's resource-name registry (EBOOT unk_261260, guest 0x08A65260):
-     * a directory of {char name[16]; u32 value; u32 extra} entries, count in the header pointed
-     * to by +12 (s16 at +4). The hangar aircraft load (fig%02dh.PMD via sub_1B35F8/sub_1C2F64)
-     * fails when its names never appear here -- this shows whether registration happens. */
-    {
-        static int rs = -1;
-        static uint32_t rs_last = 0;
-        if (rs < 0) rs = getenv("SR_REGSTAT") ? 1 : 0;
-        if (rs && s_vcount - rs_last >= 300) {
-            rs_last = s_vcount;
-            uint32_t reg = 0x08A65260u;
-            uint32_t hdr = MEM_R32(reg + 12);
-            int cnt = hdr ? (int16_t)MEM_R16(hdr + 4) : -1;
-            fprintf(stderr, "REGSTAT f=%u hdr=0x%08x count=%d", s_vcount, hdr, cnt);
-            fprintf(stderr, " raw=[");
-            for (int k = 0; k < 32; k += 4) fprintf(stderr, "%08x ", MEM_R32(reg + (uint32_t)k));
-            fprintf(stderr, "] hdrraw=[");
-            if (hdr) for (int k = 0; k < 32; k += 4) fprintf(stderr, "%08x ", MEM_R32(hdr + (uint32_t)k));
-            fprintf(stderr, "]");
-            /* Init seeds the count at 32, so slots 0..31 are reserved blanks; registrations
-             * (sub_1D1FDC) land at base+16+24*count and bump the count. Scan all slots up to
-             * count (cap 1024 = array capacity) and print only populated ones. */
-            int total = cnt > 1024 ? 1024 : cnt;
-            int nonempty = 0, shown = 0;
-            for (int i = 0; i < total; i++) {
-                uint32_t e = reg + 16 + (uint32_t)i * 24;
-                if (MEM_R8(e) == 0) continue;
-                nonempty++;
-                char nm[17];
-                int k;
-                for (k = 0; k < 16; k++) { uint8_t c = MEM_R8(e + (uint32_t)k); if (!c || c < 32 || c >= 127) break; nm[k] = (char)c; }
-                nm[k] = 0;
-                /* the hangar plane lookup wants fig%02dh.* names: always show those */
-                int isfig = (nm[0]|32) == 'f' && (nm[1]|32) == 'i' && (nm[2]|32) == 'g';
-                if (shown >= 48 && !isfig) continue;
-                shown++;
-                fprintf(stderr, " [%d:%s:0x%x]", i, nm, MEM_R32(e + 16));
-            }
-            fprintf(stderr, " nonempty=%d\n", nonempty);
-        }
-    }
     /* SR_FBSNAP=<N>: dump the presented framebuffer every N frames into a rotating set of
      * PPMs so an unattended run can be observed after the fact (8 most recent kept). */
     {
@@ -1323,26 +1251,9 @@ static uint32_t h_DisplaySetFrameBuf(CpuState *s) {
         if (fs > 0 && s_vcount - fs_last >= (uint32_t)fs) {
             fs_last = s_vcount;
             char p[64];
-            snprintf(p, sizeof p, "build/acx/snap_%u.ppm", (s_vcount / (uint32_t)fs) % 8u);
+            snprintf(p, sizeof p, "snap_%u.ppm", (s_vcount / (uint32_t)fs) % 8u);
             dump_fb_fmt(p, A0, (int)A2, A1 ? A1 : 512);
             fprintf(stderr, "FBSNAP f=%u -> %s\n", s_vcount, p);
-        }
-    }
-    /* SR_SCENESTAT=1: periodic scene-manager probe (gate/scene-object/boot state words from
-     * the FBDUMP one-shot dump, but live) -- shows what a stuck transition is waiting on. */
-    {
-        static int ss = -1; static uint32_t ss_last = 0;
-        if (ss < 0) ss = getenv("SR_SCENESTAT") ? 1 : 0;
-        if (ss && s_vcount - ss_last >= 300) {
-            ss_last = s_vcount;
-            uint32_t scobj = MEM_R32(0x08b9658c);
-            fprintf(stderr, "SCENE f=%u gate=0x%08x framectr=%u scobj=0x%08x audio=0x%08x state=%d counter=%d\n",
-                    s_vcount, MEM_R32(0x08b98ac0), MEM_R32(0x08b992d0), scobj, MEM_R32(0x08b9af80),
-                    (int)MEM_R32(0x08a83c74), (int)MEM_R32(0x08a83c78));
-            if (scobj && scobj >= 0x08800000u && scobj < 0x0c000000u)
-                for (uint32_t a = scobj; a < scobj + 0x30; a += 16)
-                    fprintf(stderr, "  sc+%02x: %08x %08x %08x %08x\n", a - scobj,
-                            MEM_R32(a), MEM_R32(a+4), MEM_R32(a+8), MEM_R32(a+12));
         }
     }
     /* The buffer handed to SetFrameBuf is a freshly-completed frame. With SR_FBDUMP=<N>, once N
@@ -1351,13 +1262,12 @@ static uint32_t h_DisplaySetFrameBuf(CpuState *s) {
     const char *fd = getenv("SR_FBDUMP");
     if (fd && s_framebuf && s_vcount >= (uint32_t)atoi(fd)) {
         extern unsigned long g_ge_pixels;
-        dump_fb_fmt("build/acx/fb_present.ppm", s_framebuf, (int)A2, A1 ? A1 : 512);
+        dump_fb_fmt("fb_present.ppm", s_framebuf, (int)A2, A1 ? A1 : 512);
         /* Also snapshot the whole 2MB eDRAM so any rendered region can be found regardless of which
          * buffer/stride/format the game settled on. */
-        FILE *raw = fopen("build/acx/edram.bin", "wb");
+        FILE *raw = fopen("edram.bin", "wb");
         if (raw) { for (uint32_t a = 0x04000000; a < 0x04200000; a += 4) { uint32_t w = MEM_R32(a); fwrite(&w, 4, 1, raw); } fclose(raw); }
         sr_trace_close();
-        if (getenv("SR_LANGLOG")) fprintf(stderr, "LANG byte @0x08A80C3C = %u\n", MEM_R8(0x08A80C3C));
         extern unsigned long g_tex_samples, g_tex_nonzero;
         fprintf(stderr, "presented frame %u: buf=0x%08x fmt=%u stride=%u ge_pixels=%lu tex_samples=%lu tex_nonzero=%lu\n",
                 s_vcount, s_framebuf, A2, A1 ? A1 : 512, g_ge_pixels, g_tex_samples, g_tex_nonzero);
@@ -1366,30 +1276,6 @@ static uint32_t h_DisplaySetFrameBuf(CpuState *s) {
                   g_mpeg_put, g_mpeg_getavc, g_mpeg_avcdec, g_mpeg_nodata); }
         sr_dump_calls();
         extern void sched_dump_threads(void); sched_dump_threads();
-        /* Scene-manager state. f_089fc75c uses base 0x08ba0000 + 0xffff8ac0 -> gate 0x08b98ac0,
-         * scene array 0x08b98ac8, framectr 0x08b992d0. */
-        fprintf(stderr, "--- scene mgr ---\n");
-        fprintf(stderr, "  [0x08b98ac0] gate     = 0x%08x\n", MEM_R32(0x08b98ac0));
-        fprintf(stderr, "  [0x08b992d0] framectr = 0x%08x\n", MEM_R32(0x08b992d0));
-        uint32_t scobj = MEM_R32(0x08b9658c);
-        fprintf(stderr, "  [0x08b9658c] scene-obj = 0x%08x  audio-flag=0x%08x\n", scobj, MEM_R32(0x08b9af80));
-        fprintf(stderr, "  --- active scene @0x%08x ---\n", scobj);
-        for (uint32_t a = scobj; a < scobj + 0x60; a += 4)
-            fprintf(stderr, "    [+0x%02x] = 0x%08x\n", a - scobj, MEM_R32(a));
-        uint32_t rroot = 0x08a80ac8u;  /* IDA unk_27CAC8: render object list root */
-        uint32_t headp = MEM_R32(rroot + 0x14);
-        uint32_t first = headp ? MEM_R32(headp) : 0;
-        fprintf(stderr, "--- render list @0x%08x headp=0x%08x first=0x%08x cb=0x%08x ---\n",
-                rroot, headp, first, MEM_R32(rroot + 0x20));
-        uint32_t node = first;
-        for (int i = 0; i < 16 && node; i++) {
-            fprintf(stderr,
-                "  node[%02d] 0x%08x next=0x%08x prev=0x%08x fn=0x%08x flags=0x%08x b18=%02x b19=%02x b202=%02x b203=%02x payload=0x%08x\n",
-                i, node, MEM_R32(node + 4), MEM_R32(node + 8), MEM_R32(node + 12),
-                MEM_R32(node + 136), MEM_R8(node + 24), MEM_R8(node + 25),
-                MEM_R8(node + 202), MEM_R8(node + 203), MEM_R32(node + 16));
-            node = MEM_R32(node + 4);
-        }
         _Exit(0);
     }
     return 0;
@@ -1446,45 +1332,6 @@ void sr_ctrl_sample(void);
 void ge_set_frame(uint32_t frame);
 void sr_vblank_tick(void) {
     s_vcount++; s_vcount_fwd = s_vcount;
-    /* TEMP (ACX save debug): watch the RECORDS-SAVE state machine (sub_3717C/sub_37794) that
-     * registers a pilot into a numbered profile slot, plus the active profile the main-menu
-     * banner reads. ACX ULUS10176, image base 0x08804000:
-     *   0x08A80E28 byte_27CE28  slot-occupancy bitmask (bit i = slot i registered)
-     *   0x08A80E08 save+0x14    active callsign field (OSK-typed name lands here)
-     *   0x08A80CD4 dword_27CCCC+8  active profile name (banner source; copied to/from slots)
-     *   0x08A80E29 byte_27CE29  current slot index
-     *   0x08A84874 dword_280874 records-save handler state (==1 is the register frame)
-     *   0x08A84890 dword_280890 target slot for registration
-     *   0x08A84894 dword_280894 register gate (0 = register, !=0 = skip as "existing")
-     *   0x08A8A6C4 save+0x18D0  profile-slot 0 name
-     * Logs on bitmask change, on the records-save entering/leaving its init frame, and every
-     * 2s, so the one-frame registration window can't be missed. */
-    if (getenv("SR_DLGLOG") && s_dlg_param) {
-        #define ACX_RDSTR(buf, addr) do { \
-            uint32_t _a = (addr); \
-            for (int _i = 0; _i < 12; _i++) { uint8_t _c = MEM_R8(_a + (uint32_t)_i); \
-                (buf)[_i] = (_c >= 32 && _c < 127) ? (char)_c : '.'; } \
-            (buf)[12] = 0; } while (0)
-        static uint8_t s_acx_last_bm = 0xFF;
-        static int s_acx_last_sv = -999;
-        uint8_t bm = MEM_R8(0x08A80E28u);
-        int sv = (int)MEM_R32(0x08A84874u);
-        int edge = (bm != s_acx_last_bm) || (sv != s_acx_last_sv && (sv == 1 || s_acx_last_sv == 1));
-        if (edge || (s_vcount % 120) == 0) {
-            char act[13], prof[13], slot0[13];
-            ACX_RDSTR(act, 0x08A80E08u);
-            ACX_RDSTR(prof, 0x08A80CD4u);
-            ACX_RDSTR(slot0, 0x08A8A6C4u);
-            fprintf(stderr, "ACXDBG vc=%u mode=%d bitmask=0x%02x curslot=%d svstate=%d "
-                    "tgtslot=%d gate=0x%08x act='%s' prof='%s' slot0='%s' dlg=%d\n",
-                    s_vcount, (int)MEM_R32(0x08A803B0u), bm, (int)MEM_R8(0x08A80E29u), sv,
-                    (int)MEM_R32(0x08A84890u), MEM_R32(0x08A84894u),
-                    act, prof, slot0, s_dlg_status);
-        }
-        s_acx_last_bm = bm; s_acx_last_sv = sv;
-        #undef ACX_RDSTR
-    }
-    sr_force_language();
     ge_set_frame(s_vcount);
     sr_ctrl_sample();   /* latch one controller sample per frame (PPSSPP ring semantics) */
     /* Hang watchdog: vblanks keep being delivered even when every game thread is blocked,
@@ -2094,7 +1941,7 @@ void sr_syscall(CpuState *s, uint32_t nid) {
     sr_last_nid = nid;
     if (getenv("SR_NIDLOG")) {
         static FILE *nf = NULL; static unsigned long nc = 0;
-        if (!nf) nf = fopen("build/acx/nidseq_mine.txt", "w");
+        if (!nf) nf = fopen("nidseq_mine.txt", "w");
         if (nf) { fprintf(nf, "0x%08x\n", nid); if ((++nc & 0x3f) == 0) fflush(nf); }
     }
     HleEntry *e = hle_find(nid);

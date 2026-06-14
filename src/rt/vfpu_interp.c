@@ -1,5 +1,5 @@
 /* Single-instruction VFPU interpreter. Same semantics as the codegen (tools/codegen.py),
- * in callable form, used to verify the VFPU against real Ace Combat X trace data and as the
+ * in callable form, used to verify the VFPU against reference trace data and as the
  * interpreter fallback (ARCHITECTURE.md section 3). Reuses the runtime prefix/transcendental
  * kernels in recomp.c.
  *
