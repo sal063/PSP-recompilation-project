@@ -20,8 +20,7 @@ To be clear about what is and is not this project's own work:
 - **PPSSPP is still used in substantial ways**, which is why the GPL applies:
   it is the verification oracle (`PPSSPPHeadless.exe`), it supplies the bundled
   system fonts, the sceMpeg/PSMF runtime (`src/rt/mpeg.c`) is a direct port of
-  PPSSPP's `Core/HLE/sceMpeg.cpp` (GPLv2+), and a full copy of PPSSPP is bundled
-  under `third_party/ppsspp`.
+  PPSSPP's `Core/HLE/sceMpeg.cpp` (GPLv2+)
 
 The novel part here is the offline MIPS-to-C static recompiler, the runtime, and
 the GPU backend; significant HLE behaviour is ported from or modelled on PPSSPP.
