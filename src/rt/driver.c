@@ -11,9 +11,6 @@
 
 #define _CRT_SECURE_NO_WARNINGS
 #include "recomp.h"
-#ifdef SR_VULKAN
-#include "gpu_vk/gpu_bridge.h"
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -107,17 +104,6 @@ int main(int argc, char **argv) {
     const char *ref_trace, *out;
 
     SetUnhandledExceptionFilter(sr_crash_filter);
-
-#ifdef SR_VULKAN
-    /* In GUI mode, PPSSPP's GPU owns guest memory (it needs the mirror-mapped arena). Adopt its
-     * base as g_mem before any segment load, so the game image and the GPU share one arena. */
-    for (int i = 1; i < argc; i++) if (strcmp(argv[i], "--gui") == 0) {
-        void *base = acx_gpu_mem_init();
-        if (base) sr_mem_use_external(base);
-        else fprintf(stderr, "acx_gpu_mem_init failed; falling back to local arena\n");
-        break;
-    }
-#endif
 
     /* Image mode: a pre-relocated flat image (e.g. a rebased PRX from tools/prxload.py) is
      * loaded at <base> and run from <entry>. Used for Ace Combat X, whose PRX must be

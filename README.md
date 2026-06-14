@@ -1,11 +1,38 @@
 # Standalone PSP Static Recompiler Toolkit
 
-This toolkit lets you translate a PSP game's relocatable executable (PRX/ELF) into C, link it with a native runtime (scheduler, HLE kernel, audio/video decoder, Vulkan/SDL3 GPU renderer), and compile it into a native Windows executable.
+This toolkit lets you translate a PSP game's relocatable executable (PRX/ELF) into C, link it with a native runtime (scheduler, HLE kernel, audio/video decoder, GPU renderer), and compile it into a native Windows executable.
+
+## License & attribution (read this first)
+
+This project is **GPL-2.0-or-later** because it is a derivative/combined work of
+**[PPSSPP](https://github.com/hrydgard/ppsspp)** (Henrik Rydgård and
+contributors, GPL-2.0-or-later). See [`../LICENSE`](../LICENSE) and
+[`../CREDITS.md`](../CREDITS.md).
+
+To be clear about what is and is not this project's own work:
+
+- **Rendering is this project's own backend.** The active renderer is the
+  from-scratch SDL3 + Vulkan backend in `src/rt/gpu_sdl3vk/`. It does **not**
+  reuse PPSSPP's GPU. (An earlier experiment, `src/rt/gpu_vk/`, *did* wrap
+  PPSSPP's `GPU_Vulkan` behind a C ABI, but it was never activated and has been
+  removed.) The GE semantics it implements were validated against PPSSPP's
+  software renderer, but the code is original.
+- **PPSSPP is still used in substantial ways**, which is why the GPL applies:
+  it is the verification oracle (`PPSSPPHeadless.exe`), it supplies the bundled
+  system fonts, the sceMpeg/PSMF runtime (`src/rt/mpeg.c`) is a direct port of
+  PPSSPP's `Core/HLE/sceMpeg.cpp` (GPLv2+), and a full copy of PPSSPP is bundled
+  under `third_party/ppsspp`.
+
+The novel part here is the offline MIPS-to-C static recompiler, the runtime, and
+the GPU backend; significant HLE behaviour is ported from or modelled on PPSSPP.
+
+If you redistribute anything built with this toolkit, the GPL requires you to
+provide complete corresponding source to your recipients.
 
 ## Layout
 
 - `tools/`: Offline compilation scripts (ELF loader, control flow analysis, MIPS-to-C code generator, and HLE import-stub mapper).
-- `src/`: Native runtime libraries and the SDL3+Vulkan GPU renderer.
+- `src/`: Native runtime libraries and the from-scratch SDL3 + Vulkan GPU renderer (`src/rt/gpu_sdl3vk`).
 - `font/`: Replacement system fonts from PPSSPP (needed for native text dialogs).
 - `SDL3.dll`: Prebuilt SDL3 library.
 - `Makefile`: Build driver for compiling the runtime and your recompiled game.

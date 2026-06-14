@@ -9,9 +9,6 @@
 #ifdef _WIN32
 #define _CRT_SECURE_NO_WARNINGS
 #include "recomp.h"
-#ifdef SR_VULKAN
-#include "gpu_vk/gpu_bridge.h"
-#endif
 #ifdef SR_SDL3VK
 #include "gpu_sdl3vk/sdl3vk.h"
 #include "gpu_sdl3vk/ge_gpu.h"
@@ -28,7 +25,6 @@
 #define PSP_H 272
 
 static int      s_on = 0;
-static int      s_vulkan = 0;          /* PPSSPP Vulkan GPU active (vs the GDI fallback blit) */
 static int      s_sdl3 = 0;            /* SDL3+Vulkan presenter active (src/rt/gpu_sdl3vk) */
 static HWND     s_hwnd;
 static uint32_t *s_px;                 /* PSP_W*PSP_H BGRA for StretchDIBits */
@@ -227,25 +223,9 @@ void gui_init(const char *title) {
     QueryPerformanceCounter(&s_last);
     s_on = 1;
     pad_init();                            /* XInput / DirectInput controllers */
-
-#ifdef SR_VULKAN
-    /* The PPSSPP Vulkan bridge currently submits ACX's lists but leaves both VFBs black. Keep it
-     * available for bridge bring-up, but default the game window to the known-good software GE. */
-    {
-        const char *use_vulkan = getenv("SR_USE_VULKAN");
-        if (use_vulkan && use_vulkan[0] && strcmp(use_vulkan, "0") != 0) {
-            s_vulkan = acx_gpu_init(GetModuleHandleA(0), s_hwnd);
-            if (!s_vulkan)
-                fprintf(stderr, "gui_init: Vulkan GPU init failed; falling back to GDI framebuffer blit\n");
-        } else {
-            fprintf(stderr, "gui_init: Vulkan GPU disabled; using software GE/GDI (set SR_USE_VULKAN=1 to enable)\n");
-        }
-    }
-#endif
 }
 
 int gui_on(void) { return s_on; }
-int gui_vulkan_on(void) { return s_vulkan; }
 uint32_t gui_buttons(void) { return s_buttons; }
 void gui_analog(uint8_t *lx, uint8_t *ly) { if (lx) *lx = s_lx; if (ly) *ly = s_ly; }
 int gui_pad_present(void) { return s_pad_present; }
@@ -332,16 +312,6 @@ void gui_present(uint32_t fbaddr, int fmt, uint32_t stride) {
     s_buttons = read_keys() | read_pad(&lx, &ly);
     s_lx = lx; s_ly = ly;
 
-#ifdef SR_VULKAN
-    if (s_vulkan) {
-        /* PPSSPP's GPU already rendered the GE display lists into VRAM; tell it which buffer the
-         * game flipped to and composite it to the swapchain. No CPU-side pixel conversion. */
-        acx_gpu_set_framebuf(fbaddr, stride, fmt);
-        acx_gpu_present();
-        goto pace;
-    }
-#endif
-
     convert_fb(fbaddr, fmt, stride);
     HDC dc = GetDC(s_hwnd);
     RECT cr; GetClientRect(s_hwnd, &cr);
@@ -349,7 +319,7 @@ void gui_present(uint32_t fbaddr, int fmt, uint32_t stride) {
                   s_px, &s_bmi, DIB_RGB_COLORS, SRCCOPY);
     ReleaseDC(s_hwnd, dc);
 
-#if defined(SR_VULKAN) || defined(SR_SDL3VK)
+#ifdef SR_SDL3VK
 pace:
 #endif
     /* Pace to ~60 Hz so the intro/menus play at a watchable speed. Skipped when the scheduler

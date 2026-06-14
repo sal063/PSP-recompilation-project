@@ -65,7 +65,6 @@ static inline void sr_w32(uint32_t a, uint32_t v) { if (sr_inrange(a)) *(uint32_
 #define MEM_W32(a,v) sr_w32((a), (uint32_t)(v))
 
 void  sr_mem_init(void);
-void  sr_mem_use_external(void *guest_phys0);  /* adopt a bridge-owned arena (Vulkan GUI build) */
 void  sr_load_segment(uint32_t vaddr, const void *data, uint32_t len);
 
 /* Unaligned word access (MIPS LWL/LWR/SWL/SWR), little-endian, matching PPSSPP's
@@ -144,7 +143,6 @@ uint32_t ge_framebuffer(void);
  * gui_buttons returns the live PSP pad state; gui_on reports whether the window is active. */
 void     gui_init(const char *title);
 int      gui_on(void);
-int      gui_vulkan_on(void);   /* 1 when the PPSSPP Vulkan GPU is driving rendering */
 uint32_t gui_buttons(void);
 void     gui_analog(uint8_t *lx, uint8_t *ly);   /* live left-stick (0..255, 128=centre) */
 int      gui_pad_present(void);                  /* 1 when a game controller is connected */

@@ -2,8 +2,14 @@
 
 New GPU renderer for the recompiled runtime, replacing the Win32/GDI presentation path and
 (eventually) the software GE rasterizer in `src/rt/ge.c`. Built from scratch in this
-directory; **`src/rt/gpu_vk/` (the PPSSPP Vulkan bridge) is a separate, frozen experiment
-and is never modified or activated by this work.**
+directory — it is the project's own Vulkan backend and does **not** reuse PPSSPP's GPU. (An
+earlier PPSSPP-GPU bridge under `src/rt/gpu_vk/` was a frozen experiment and has been removed.)
+
+> **AI disclosure:** this renderer was written with substantial assistance from an LLM
+> (Anthropic Claude). It is an original implementation, but it reproduces PSP/GE pixel
+> semantics derived from PPSSPP's software renderer (through `ge.c`), so it is GPL-2.0-or-later.
+> See [`../../../CREDITS.md`](../../../CREDITS.md). Treat "faithfulness" claims below as
+> intent, not an audited guarantee.
 
 ## Why this shape
 

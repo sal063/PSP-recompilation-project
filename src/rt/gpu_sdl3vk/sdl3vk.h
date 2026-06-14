@@ -4,8 +4,9 @@
  * framebuffer through a Vulkan swapchain (SDL3 owns the window and all input devices);
  * later phases move GE rasterization itself onto the GPU behind this same boundary.
  *
- * This backend is independent of src/rt/gpu_vk (the PPSSPP bridge), which must not be
- * modified or activated. */
+ * This is the project's own Vulkan backend, written from scratch; it does not reuse
+ * PPSSPP's GPU. (An earlier PPSSPP-GPU bridge under src/rt/gpu_vk was a frozen experiment
+ * and has been removed.) */
 #ifndef SR_SDL3VK_H
 #define SR_SDL3VK_H
 

@@ -30,14 +30,6 @@ void sr_oor(uint32_t a, uint32_t v, int store) {
 #define SR_VRAM_LOW  0x04000000u  /* guest VRAM/eDRAM base, below user RAM */
 #define SR_RAM_SIZE  0x04000000u  /* 64 MB user RAM at 0x08000000 */
 
-/* Adopt an externally-owned guest arena instead of malloc'ing our own. Used by the Vulkan GUI
- * build: PPSSPP's GPU owns the mirror-mapped guest memory (acx_gpu_mem_init returns guest phys 0
- * = Memory::base), and we point g_mem at its RAM window (base + 0x08000000) so both sides share
- * one arena byte-for-byte (recomp.h: SR_HOST(a) == base + SR_PHYS(a)). Call before any load. */
-void sr_mem_use_external(void *guest_phys0) {
-    g_mem = (uint8_t *)guest_phys0 + SR_RAM_BASE;   /* g_mem == guest 0x08000000 */
-}
-
 void sr_mem_init(void) {
     if (!g_mem) {
         /* One arena covering VRAM (0x04000000..) and user RAM (0x08000000..). g_mem points at

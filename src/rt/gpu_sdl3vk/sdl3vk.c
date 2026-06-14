@@ -8,7 +8,11 @@
  * to the same PSP sceCtrl bits gui.c uses.
  *
  * Deliberately single-frame-in-flight (fence after submit): presentation cost is trivial
- * and it keeps swapchain recreation and shutdown simple while the architecture settles. */
+ * and it keeps swapchain recreation and shutdown simple while the architecture settles.
+ *
+ * AI disclosure: this renderer is an original implementation (it does not reuse PPSSPP's
+ * GPU) written with substantial assistance from an LLM (Anthropic Claude). See CREDITS.md.
+ * GPLv2+: it consumes ge.c, whose GE semantics are derived from PPSSPP. */
 
 #include "sdl3vk.h"
 

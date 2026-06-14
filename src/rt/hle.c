@@ -20,9 +20,6 @@
 #include "iso.h"
 #include "pgf.h"
 #include "nid_names.h"   /* sr_nid_name(): names unknown NIDs in the trap below */
-#ifdef SR_VULKAN
-#include "gpu_vk/gpu_bridge.h"
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -402,8 +399,8 @@ static uint32_t h_FontFindOptimumFont(CpuState *s) {
  * These thin wrappers marshal MIPS args to the ported mpeg_* functions. The port implements the
  * real PSMF analysis, ring-buffer accounting, handle/context creation, stream registration, and
  * AU getters with timestamp progression + end-of-stream, so the movie playback loop runs and
- * completes exactly as on PPSSPP. The GUI build routes AVC video through PPSSPP's MediaEngine
- * bridge in acx_gpu.dll; ATRAC movie audio is still modelled as silence. */
+ * completes exactly as on PPSSPP. The SDL3 build decodes AVC video through Windows Media
+ * Foundation (h264_mf.c); ATRAC movie audio is still modelled as silence. */
 uint32_t mpeg_init(void);
 uint32_t mpeg_finish(void);
 uint32_t mpeg_query_mem_size(uint32_t outAddr);
@@ -1584,15 +1581,6 @@ static uint32_t h_GeListEnQueue(CpuState *s) {
             }
         }
     }
-#ifdef SR_VULKAN
-    if (gui_vulkan_on()) {
-        /* PPSSPP's Vulkan GPU owns rendering: submit the list (a0) with its stall address (a1)
-         * and let it parse + rasterise. The hand-rolled ge.c path is bypassed entirely. */
-        acx_gpu_enqueue_list(A0, A1);
-        ge_finish_callback(s, A2, list_id, A3);
-        return list_id;
-    }
-#endif
     ge_run_list(A0);   /* process the list now (sets GE state, rasterises any PRIM) */
     ge_finish_callback(s, A2, list_id, A3);
     if (getenv("SR_GESIG")) {

@@ -1,5 +1,9 @@
 /* GPU GE rasterizer: full GPU rendering with persistent framebuffers (see README.md).
  *
+ * AI disclosure: original Vulkan backend (NOT a port of PPSSPP's GPU), written with
+ * substantial assistance from an LLM (Anthropic Claude). It reproduces PSP/GE pixel rules
+ * derived from PPSSPP's software renderer (via ge.c), so it is GPLv2+. See CREDITS.md.
+ *
  * Architecture: ge.c keeps doing vertex decode + T&L + clipping + primitive acceptance
  * (the parts validated against PPSSPP), then hands SCREEN-SPACE primitives to this
  * backend through the GeGpuHooks seam. Every primitive renders on the GPU — there is no

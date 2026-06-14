@@ -13,9 +13,6 @@
 
 #define _CRT_SECURE_NO_WARNINGS
 #include "recomp.h"
-#ifdef SR_VULKAN
-#include "gpu_vk/gpu_bridge.h"
-#endif
 #ifdef SR_SDL3VK
 /* Media Foundation H.264 decode (h264_mf.c): real movie frames for the SDL3 build. */
 int  sr_h264_create(void);
@@ -80,9 +77,6 @@ typedef struct {
     uint32_t totalPackets;       /* streamSize/packetSize: whole-movie packet count */
     uint32_t fedPackets;         /* cumulative packets the game has put into the ring */
     uint32_t headerAddr;         /* guest address of the PSMF header passed to QueryStreamOffset */
-    int bridgeLoaded;            /* PPSSPP MediaEngine has been initialised for this movie */
-    int bridgeSawData;           /* compressed data has reached the MediaEngine */
-    int bridgeFailed;            /* bridge decode failed; fall back to timestamp-only mode */
     int h264;                    /* SDL3 build: Media Foundation H.264 decoder id (-1 = none) */
     int h264Init, h264Frames;
     int defaultFrameWidth, pixelMode;
@@ -122,34 +116,6 @@ static uint32_t call_guest3(CpuState *s, uint32_t fn, uint32_t a0, uint32_t a1, 
     sr_timeslice = save_slice;
     return ret;
 }
-
-#ifdef SR_VULKAN
-static int bridge_load_if_needed(Mpeg *ctx) {
-    if (!ctx || ctx->bridgeFailed) return 0;
-    if (ctx->bridgeLoaded) return 1;
-    if (!ctx->headerAddr || !ctx->ringAddr) return 0;
-    uint32_t packets = rb_get(ctx->ringAddr, RB_packets);
-    uint32_t packetSize = rb_get(ctx->ringAddr, RB_packetSize);
-    uint32_t ringSize = packets * (packetSize ? packetSize : 2048u);
-    ctx->bridgeLoaded = acx_media_load_stream(ctx->handle, ctx->headerAddr, 2048, (int)ringSize);
-    if (!ctx->bridgeLoaded) ctx->bridgeFailed = 1;
-    if (getenv("SR_MPEGLOG"))
-        fprintf(stderr, "mpeg bridge load key=0x%08x header=0x%08x ring=%u -> %d\n",
-                ctx->handle, ctx->headerAddr, ringSize, ctx->bridgeLoaded);
-    return ctx->bridgeLoaded;
-}
-
-static int bridge_remain_packets(Mpeg *ctx) {
-    if (!ctx || !ctx->bridgeLoaded || !ctx->ringAddr) return -1;
-    uint32_t packets = rb_get(ctx->ringAddr, RB_packets);
-    int remain = acx_media_get_remain_size(ctx->handle);
-    if (remain < 0) remain = 0;
-    int used = (int)packets - remain / 2048;
-    if (used < 0) used = 0;
-    if (used > (int)packets) used = (int)packets;
-    return used;
-}
-#endif
 
 /* big-endian 32 read from guest memory (PSMF header is big-endian) */
 static uint32_t be32(uint32_t a) {
@@ -200,9 +166,6 @@ static void au_write_pts(uint32_t auAddr, int off, int64_t v) {
 
 uint32_t mpeg_init(void) { s_mpegInit = 1; return 0; }
 uint32_t mpeg_finish(void) {
-#ifdef SR_VULKAN
-    for (int i = 0; i < 8; i++) if (s_mpeg[i].used) acx_media_destroy(s_mpeg[i].handle);
-#endif
 #ifdef SR_SDL3VK
     for (int i = 0; i < 8; i++) if (s_mpeg[i].used && s_mpeg[i].h264 >= 0) {
         sr_h264_destroy(s_mpeg[i].h264);
@@ -274,9 +237,6 @@ uint32_t mpeg_create(uint32_t mpegAddr, uint32_t dataPtr, uint32_t size, uint32_
 uint32_t mpeg_delete(uint32_t mpegAddr) {
     Mpeg *ctx = mpeg_find(mpegAddr);
     if (!ctx) return (uint32_t)-1;
-#ifdef SR_VULKAN
-    acx_media_destroy(ctx->handle);
-#endif
 #ifdef SR_SDL3VK
     if (ctx->h264 >= 0) { sr_h264_destroy(ctx->h264); ctx->h264 = -1; }
 #endif
@@ -293,9 +253,6 @@ uint32_t mpeg_query_stream_offset(uint32_t mpegAddr, uint32_t bufferAddr, uint32
     if (ctx->magic != PSMF_MAGIC) { MEM_W32(offsetAddr, 0); return SCE_MPEG_ERROR_INVALID_VALUE; }
     if (ctx->version < 0) { MEM_W32(offsetAddr, 0); return SCE_MPEG_ERROR_BAD_VERSION; }
     if ((ctx->offset & 2047) != 0 || ctx->offset == 0) { MEM_W32(offsetAddr, 0); return SCE_MPEG_ERROR_INVALID_VALUE; }
-#ifdef SR_VULKAN
-    bridge_load_if_needed(ctx);
-#endif
     MEM_W32(offsetAddr, ctx->offset);
     return 0;
 }
@@ -321,12 +278,6 @@ uint32_t mpeg_regist_stream(uint32_t mpegAddr, uint32_t streamType, uint32_t str
         ctx->streams[i].num = (int)streamNum; ctx->streams[i].sid = sid; ctx->streams[i].needsReset = 1;
         break;
     }
-#ifdef SR_VULKAN
-    if (streamType == MPEG_AVC_STREAM) {
-        bridge_load_if_needed(ctx);
-        acx_media_add_video_stream(ctx->handle, (int)streamNum, -1);
-    }
-#endif
     return sid;
 }
 /* sceMpegMallocAvcEsBuf: PPSSPP keeps a couple of flags rather than really allocating; returns a
@@ -407,10 +358,6 @@ uint32_t mpeg_ringbuffer_put(CpuState *s, uint32_t ring, uint32_t numPackets, ui
         }
     }
 
-#ifdef SR_VULKAN
-    if (ctx) bridge_load_if_needed(ctx);
-#endif
-
     uint32_t addedTotal = 0;
     uint32_t writePos = total ? (rb_get(ring, RB_packetsWritePos) % total) : 0;
     while (addedTotal < addWanted) {
@@ -432,19 +379,6 @@ uint32_t mpeg_ringbuffer_put(CpuState *s, uint32_t ring, uint32_t numPackets, ui
             if (!ctx->h264Init) { ctx->h264Init = 1; ctx->h264 = sr_h264_create(); }
             if (ctx->h264 >= 0)
                 sr_h264_feed(ctx->h264, (const uint8_t *)SR_HOST(dst), got * packetSize);
-        }
-#endif
-#ifdef SR_VULKAN
-        if (ctx && ctx->bridgeLoaded && !ctx->bridgeFailed) {
-            int accepted = acx_media_add_stream_data(ctx->handle, dst, (int)(got * packetSize));
-            if (accepted > 0) {
-                uint32_t acceptedPackets = (uint32_t)accepted / packetSize;
-                if (acceptedPackets == 0) acceptedPackets = got;
-                if (acceptedPackets < got) got = acceptedPackets;
-                ctx->bridgeSawData = 1;
-            } else {
-                ctx->bridgeFailed = 1;
-            }
         }
 #endif
 
@@ -491,12 +425,6 @@ uint32_t mpeg_get_avc_au(uint32_t mpegAddr, uint32_t sid, uint32_t auAddr, uint3
      * runs for the full file then ends, instead of stopping at the (segment-only) header timestamp. */
     if (ctx->totalPackets && ctx->fedPackets >= ctx->totalPackets && rb_get(ring, RB_packetsAvail) == 0)
         ctx->videoEnd = 1;
-#ifdef SR_VULKAN
-    if (ctx->bridgeLoaded && acx_media_is_video_end(ctx->handle)) {
-        rb_set(ring, RB_packetsAvail, 0);
-        ctx->videoEnd = 1;
-    }
-#endif
     if (rb_get(ring, RB_packetsRead) == 0 || rb_get(ring, RB_packetsAvail) == 0) {
         g_mpeg_nodata++;
         au_write_pts(auAddr, 0, -1); au_write_pts(auAddr, 8, -1);
@@ -505,17 +433,10 @@ uint32_t mpeg_get_avc_au(uint32_t mpegAddr, uint32_t sid, uint32_t auAddr, uint3
     int needsReset = 0, num = 0;
     au_stream(mpegAddr, sid, &needsReset, &num);
     int64_t pts = ctx->videoPts + ctx->firstTimestamp;
-#ifdef SR_VULKAN
-    if (ctx->bridgeLoaded && !ctx->bridgeFailed)
-        pts = acx_media_get_video_timestamp(ctx->handle) + ctx->firstTimestamp;
-#endif
     au_write_pts(auAddr, 0, pts);
     au_write_pts(auAddr, 8, pts - videoTimestampStep);
     MEM_W32(auAddr + 16, (uint32_t)num);            /* esBuffer abused as stream num */
     uint32_t avail = rb_get(ring, RB_packetsAvail);
-#ifdef SR_VULKAN
-    if (!ctx->bridgeLoaded || ctx->bridgeFailed)
-#endif
     if (avail > 0) rb_set(ring, RB_packetsAvail, avail - 1);   /* consume one packet */
     if (attrAddr) MEM_W32(attrAddr, 1);
     if (getenv("SR_MPEGLOG")) {
@@ -556,38 +477,16 @@ static void clear_video_buffer(uint32_t ptr, uint32_t frameWidth, int pixelMode)
 }
 
 /* AvcDecode(mpeg, auAddr, frameWidth, bufferAddr, initAddr): decode one AVC frame into
- * *bufferAddr when the PPSSPP MediaEngine bridge is available, otherwise keep the old
- * timestamp-only model as a fallback. */
+ * *bufferAddr. The SDL3 build decodes through Media Foundation (h264_mf.c); otherwise the
+ * timestamp-only model runs and leaves the frame blank. */
 uint32_t mpeg_avc_decode(uint32_t mpegAddr, uint32_t auAddr, uint32_t frameWidth, uint32_t bufferAddr, uint32_t initAddr) {
+    (void)auAddr;
     Mpeg *ctx = mpeg_find(mpegAddr);
     if (!ctx) return (uint32_t)-1;
     g_mpeg_avcdec++;
     if (frameWidth == 0 || frameWidth > 2048)
         frameWidth = ctx->defaultFrameWidth ? (uint32_t)ctx->defaultFrameWidth : 512u;
     uint32_t buffer = bufferAddr ? MEM_R32(bufferAddr) : 0;
-
-#ifdef SR_VULKAN
-    if (ctx->bridgeLoaded && !ctx->bridgeFailed && ctx->bridgeSawData) {
-        int streamNum = auAddr ? (int)MEM_R32(auAddr + 16) : -1;
-        int frameStatus = acx_media_step_video(ctx->handle, streamNum, ctx->pixelMode, buffer, (int)frameWidth);
-        int used = bridge_remain_packets(ctx);
-        if (used >= 0 && ctx->ringAddr)
-            rb_set(ctx->ringAddr, RB_packetsAvail, (uint32_t)used);
-        if (frameStatus < 0 || acx_media_is_video_end(ctx->handle)) {
-            ctx->videoEnd = 1;
-            if (ctx->ringAddr) rb_set(ctx->ringAddr, RB_packetsAvail, 0);
-            if (initAddr) MEM_W32(initAddr, 0);
-            return 0;
-        }
-        ctx->videoPts = acx_media_get_video_timestamp(ctx->handle);
-        if (initAddr) MEM_W32(initAddr, frameStatus ? 1u : 0u);
-        {   /* the decoded frame was CPU-written into guest memory */
-            extern void sr_gpu_vram_dirty(uint32_t addr, uint32_t bytes);
-            if (buffer) sr_gpu_vram_dirty(buffer, video_buffer_bytes(frameWidth, ctx->pixelMode));
-        }
-        return 0;
-    }
-#endif
 
     ctx->videoPts += videoTimestampStep;
     /* Report "a frame was produced" (1) every decode; the game keeps feeding/decoding until it has
